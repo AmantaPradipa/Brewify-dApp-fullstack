@@ -7,17 +7,17 @@ dApp untuk rantai pasok kopi berbasis NFT: petani (farmer) melakukan minting Bat
 ## 1. Ringkasan Fitur
 
 - **Batch NFT (ERC721)**  
-  Setiap batch kopi dimodelkan sebagai NFT dengan metadata IPFS dan status produksi/pengiriman on-chain.
+  Setiap batch kopi dimodelkan sebagai NFT dengan metadata IPFS (URI) dan status produksi/pengiriman on-chain.
 
 - **Farmer Flow**
   - Dashboard untuk melihat daftar batch (dummy data untuk sekarang).
   - Halaman minting untuk membuat Batch NFT baru:
     - Upload gambar ke IPFS via Pinata.
-    - Simpan hash/IPFS URL di smart contract.
+    - Simpan URI IPFS di smart contract.
     - Generate QR code per token.
 
 - **Buyer Flow**
-  - Landing page marketplace (dummy listing untuk sekarang) dengan filter kopi.
+  - Landing page marketplace (dummy listing) dengan filter kopi.
   - Modal detail produk + tombol “Buy Now” yang mengirim ETH ke alamat contoh via MetaMask.
   - Halaman buyer untuk melihat daftar order dan status pengiriman (dummy).
 
@@ -40,18 +40,18 @@ dApp untuk rantai pasok kopi berbasis NFT: petani (farmer) melakukan minting Bat
 
 - **Web3 & Storage**
   - `ethers` v6 – koneksi wallet, transaksi, kontrak
-  - `@openzeppelin/contracts` – implementasi ERC721
+  - `@openzeppelin/contracts` – ERC721 + `ERC721URIStorage` + `AccessControl`
   - `pinata` (PinataSDK) – upload file & JSON ke IPFS + signed URL
 
 - **Smart Contract & Tooling**
   - `Truffle` – compile dan deploy smart contract
-  - Solidity 0.8.21 (diset di `truffle-config.js`)
+  - Solidity `0.8.19` (diset di `truffle-config.js`)
 
 ---
 
 ## 3. Arsitektur & Struktur Direktori
 
-Struktur utama (hanya yang relevan):
+Struktur utama (yang relevan):
 
 - `app/`
   - `layout.tsx` – root layout Next.js.
@@ -103,30 +103,50 @@ Struktur utama (hanya yang relevan):
 
 - `contracts/`
   - `BatchNFT.sol`
-    - ERC721 “Brewify Batch” (`BBATCH`).
+    - Kontrak utama NFT batch kopi:
+      - `contract BatchNFT is ERC721URIStorage, AccessControl`.
+      - Nama token: `"Brewify Coffee Batch"`, simbol: `"BREW"`.
+    - Roles:
+      - `DEFAULT_ADMIN_ROLE` – admin kontrak (set di constructor ke `msg.sender`).
+      - `MINTER_ROLE` – hanya address dengan role ini yang boleh mint & update status.
     - State:
-      - `uint256 public nextTokenId;`
-      - `enum Status { Harvesting, Roasting, Packaged, Shipped, Delivered }`
-      - `mapping(uint256 => string) public batchMetadata;`
-      - `mapping(uint256 => Status) public batchStatus;`
+      - `uint256 private _nextId = 1;` – counter token ID.
+      - `enum Status { Unknown, Harvested, Processed, Packed, Shipped, Delivered }`
+      - `mapping(uint256 => Status) public tokenStatus;`
     - Event:
-      - `BatchMinted(uint256 tokenId, address owner, string ipfsHash)`
-      - `StatusUpdated(uint256 tokenId, Status status)`
+      - `BatchMinted(address indexed to, uint256 indexed tokenId, string uri)`
+      - `StatusUpdated(uint256 indexed tokenId, Status newStatus)`
     - Fungsi utama:
-      - `mintBatch(address to, string memory ipfsHash)`:
-        - Mint token id baru ke `to`.
-        - Simpan metadata IPFS.
-        - Inisialisasi status ke `Status.Harvesting`.
-      - `updateBatchStatus(uint256 tokenId, Status newStatus)`:
-        - Hanya owner NFT yang boleh update status.
-        - Emit event `StatusUpdated`.
+      - `mintBatch(address to, string memory uri)`:
+        - `onlyRole(MINTER_ROLE)`.
+        - Mint token ID baru ke `to`.
+        - Set URI dengan `_setTokenURI(tokenId, uri)`.
+        - Set status awal `Status.Harvested`.
+        - Emit `BatchMinted`.
+      - `updateStatus(uint256 tokenId, Status newStatus)`:
+        - `onlyRole(MINTER_ROLE)`.
+        - Require token exist.
+        - Update `tokenStatus[tokenId]` dan emit `StatusUpdated`.
+      - `getStatus(uint256 tokenId)`:
+        - View fungsi untuk membaca status token.
+      - Override penting:
+        - `supportsInterface` override `ERC721URIStorage` + `AccessControl`.
+        - `_burn` dan `tokenURI` override `ERC721URIStorage`.
 
 - `migrations/`
-  - `2_deploy_contracts.js`
-    - Script Truffle untuk deploy `BatchNFT`.
+  - `1_deploy_contracts.js`
+    - Deploy kontrak `BatchNFT`.
+  - (file `.gitkeep` untuk menjaga folder tetap ada di repo).
 
 - `truffle-config.js`
-  - Konfigurasi jaringan `development` (localhost:8545) dan compiler `0.8.21`.
+  - Jaringan:
+    - `development`:
+      - `host: "127.0.0.1"`
+      - `port: 7545` (default Ganache GUI)
+      - `network_id: "*"`
+  - Compiler:
+    - `solc.version: "0.8.19"`
+    - Optimizer aktif, EVM version `london`.
 
 ---
 
@@ -149,7 +169,7 @@ File: `app/page.tsx`
       - `value: parseEther(product.priceEth)`.
     - Menampilkan toast sukses/gagal.
 
-> Catatan: untuk saat ini, transaksi buy belum lewat kontrak marketplace/escrow, hanya direct transfer ke alamat contoh.
+> Saat ini, transaksi buy belum lewat kontrak marketplace/escrow, hanya direct transfer ke alamat contoh.
 
 ### 4.2 Dashboard Farmer
 
@@ -171,24 +191,23 @@ File: `app/farmer/minting/page.tsx`
   - `harvested`, `roasted`, `packed` (timeline)
   - Upload file gambar batch.
 
-- Proses `handleMint`:
+- Proses `handleMint` (ringkas):
   1. Validasi field wajib.
   2. Upload file ke `/api/upload`:
      - Endpoint mem-forward ke Pinata dan mengembalikan URL gateway.
-     - Di kontrak yang sekarang, kode memanfaatkan nilai `ipfs://CID` (cek/align dengan implementasi akhir).
+     - URL/URI ini dipakai sebagai token URI di kontrak `BatchNFT`.
   3. Cek `window.ethereum` dan inisialisasi:
      - `ethers.BrowserProvider(window.ethereum)`
      - `const signer = await provider.getSigner();`
   4. Instansiasi kontrak:
      - `new ethers.Contract(CONTRACT_ADDRESS, BatchNFTAbi.abi, signer)`
-  5. Panggil `mintBatch(to, ipfsHash)`:
+  5. Panggil `mintBatch(to, uri)`:
      - `to` = address signer.
      - Menunggu transaksi selesai dan membaca event `BatchMinted` untuk `tokenId`.
-  6. Baca ulang:
-     - `batchMetadata(tokenId)`
-     - `batchStatus(tokenId)`
+  6. Baca ulang status token:
+     - `tokenStatus(tokenId)` via helper / kontrak.
   7. Simpan `tokenId` dan tampilkan QR code:
-     - Saat ini value QR code berupa URL contoh: `https://example.com/token/${tokenId}`.
+     - Saat ini value QR code berupa URL contoh: `https://example.com/token/${tokenId}` (bisa diarahkan ke halaman detail on-chain di masa depan).
 
 ### 4.4 Dashboard Buyer
 
@@ -213,7 +232,7 @@ Buat file `.env.local` di root project:
 ```bash
 PINATA_JWT=your_pinata_jwt
 NEXT_PUBLIC_GATEWAY_URL=https://gateway.pinata.cloud/ipfs
-NEXT_PUBLIC_RPC_URL=http://127.0.0.1:8545  # optional, untuk read-only
+NEXT_PUBLIC_RPC_URL=http://127.0.0.1:7545  # optional, untuk read-only
 ```
 
 Penjelasan:
@@ -253,7 +272,7 @@ npm install
 
 Jika ingin pakai Truffle + Ganache:
 
-1. Jalankan Ganache GUI/CLI di `127.0.0.1:8545`.
+1. Jalankan Ganache GUI/CLI di `127.0.0.1:7545`.
 2. Compile & migrate kontrak:
 
 ```bash
@@ -265,7 +284,7 @@ truffle migrate --network development
 4. Update:
    - `CONTRACT_ADDRESS` di `utils/BatchNFT.ts`
    - `CONTRACT_ADDRESS` di `app/farmer/minting/page.tsx`
-5. Import private key dari Ganache ke MetaMask dan set jaringan custom RPC yang sama (`127.0.0.1:8545`).
+5. Import private key dari Ganache ke MetaMask dan set jaringan custom RPC yang sama (`127.0.0.1:7545`).
 
 ### 6.4 Menjalankan Frontend
 
@@ -307,7 +326,7 @@ Digunakan di halaman minting untuk mengunggah gambar batch sebelum mint NFT.
 
 - Fungsi publik:
   - `mintBatch(to, ipfsHash)` – mint token baru.
-  - `updateBatchStatus(tokenId, status)` – mengubah enum status (butuh signer).
+  - `updateBatchStatus(tokenId, status)` – mengubah enum status (butuh signer dengan `MINTER_ROLE`).
   - `getBatchMetadata(tokenId)` – baca metadata (IPFS URL/hash).
   - `getBatchStatus(tokenId)` – baca status enum.
 
@@ -319,10 +338,10 @@ Digunakan di halaman minting untuk mengunggah gambar batch sebelum mint NFT.
 - Rekomendasi test kontrak:
   - Mint Batch NFT dan cek:
     - Owner benar.
-    - `batchMetadata` sesuai IPFS hash.
-    - `batchStatus` awal = `Harvesting`.
-  - `updateBatchStatus`:
-    - Hanya owner yang dapat mengubah status.
+    - `tokenStatus` awal = `Status.Harvested`.
+    - `tokenURI` sesuai dengan URI yang dikirim.
+  - `updateStatus`:
+    - Hanya address dengan `MINTER_ROLE` yang dapat mengubah status.
     - Event `StatusUpdated` teremit dengan nilai enum yang benar.
 
 Untuk frontend/backend Next.js belum ada test terintegrasi; Anda dapat menambahkan sesuai kebutuhan (mis. Jest/Playwright).
@@ -358,7 +377,7 @@ Per kode sekarang, pembelian masih berupa pengiriman ETH langsung ke alamat cont
     - Menarik daftar order & status escrow on-chain.
     - Tombol “Confirm” memanggil fungsi release dana di escrow.
   - Dashboard farmer:
-    - Mengupdate `batchStatus` di kontrak BatchNFT.
+    - Mengupdate status di kontrak `BatchNFT`.
     - Memicu logika release dana escrow setelah status `Delivered`.
 
 Roadmap ini menjaga garis besar arsitektur yang sudah ada (BatchNFT + IPFS + Pinata) sambil menambahkan layer ekonomi dan keamanan melalui escrow & marketplace on-chain.
