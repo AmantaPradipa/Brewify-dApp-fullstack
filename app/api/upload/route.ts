@@ -12,7 +12,8 @@ export async function POST(req: NextRequest) {
     const result = await pinata.upload.public.file(file);
     const url = await pinata.gateways.public.convert(result.cid);
 
-    return NextResponse.json({ url }, { status: 200 });
+    // kembalikan cid & url supaya front-end bisa pakai ipfs://cid
+    return NextResponse.json({ cid: result.cid, url }, { status: 200 });
   } catch (err) {
     console.error(err);
     return NextResponse.json({ error: "Upload failed" }, { status: 500 });

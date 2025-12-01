@@ -1,384 +1,363 @@
 # Brewify – Coffee Batch NFT dApp
 
-dApp untuk rantai pasok kopi berbasis NFT: petani (farmer) melakukan minting Batch NFT di blockchain, pembeli (buyer) bisa menelusuri batch kopi, membeli, dan memantau status pengiriman secara transparan.
+Brewify adalah dApp rantai pasok kopi: petani (farmer) melakukan minting Batch NFT di blockchain, pembeli (buyer) membeli kopi lewat marketplace on‑chain, dan pihak logistik (logistics) membantu update status pengiriman. Semua identitas user, metadata batch, dan pembayaran terekam di blockchain dan IPFS.
 
 ---
 
-## 1. Ringkasan Fitur
+## 1. Fitur Utama
 
 - **Batch NFT (ERC721)**  
-  Setiap batch kopi dimodelkan sebagai NFT dengan metadata IPFS (URI) dan status produksi/pengiriman on-chain.
+  Setiap batch kopi dimodelkan sebagai NFT (ERC721) dengan metadata di IPFS (`ipfs://CID`) dan status produksi/pengiriman on‑chain.
 
-- **Farmer Flow**
-  - Dashboard untuk melihat daftar batch (dummy data untuk sekarang).
-  - Halaman minting untuk membuat Batch NFT baru:
-    - Upload gambar ke IPFS via Pinata.
-    - Simpan URI IPFS di smart contract.
-    - Generate QR code per token.
+- **On‑chain Profile & Role**
+  - User connect wallet → pilih role (Buyer / Farmer / Logistics) → set username di kontrak `UserProfile`.
+  - Frontend membaca role + username dari blockchain, tanpa database terpusat.
 
-- **Buyer Flow**
-  - Landing page marketplace (dummy listing) dengan filter kopi.
-  - Modal detail produk + tombol “Buy Now” yang mengirim ETH ke alamat contoh via MetaMask.
-  - Halaman buyer untuk melihat daftar order dan status pengiriman (dummy).
+- **Marketplace + Escrow**
+  - Farmer membuat listing untuk batch NFT di kontrak `Marketplace`.
+  - Buyer melakukan pembelian → dana ETH dikunci di kontrak `Escrow` sampai buyer konfirmasi penerimaan.
+  - Escrow mendukung fee platform dan mekanisme cancel/dispute sederhana.
 
-- **Integrasi Web3 & IPFS**
-  - Koneksi wallet dan transaksi menggunakan `ethers` v6.
-  - Penyimpanan file & metadata di IPFS menggunakan Pinata SDK.
-  - QR code untuk akses cepat ke informasi token/batch.
+- **Tracking Status Kopi**
+  - Kontrak `BatchNFT` menyimpan status enum: `Unknown → Harvested → Processed → Packed → Shipped → Delivered`.
+  - Farmer (role `Farmer` di `UserProfile`) mengatur status produksi awal; Logistics (role `Logistics` di `UserProfile`) mengatur status pengiriman/Delivered (otorisasi diambil dari kontrak `UserProfile`).
+
+- **IPFS & QR Code**
+  - Gambar batch di‑upload ke IPFS via Pinata; endpoint Next.js mengembalikan `cid` + URL gateway.
+  - `tokenURI` di kontrak diset ke `ipfs://cid`. QR code bisa diarahkan ke halaman detail batch yang membaca metadata + status dari on‑chain/IPFS.
 
 ---
 
-## 2. Tech Stack & Libraries
+## 2. Tech Stack
 
 - **Frontend**
-  - `Next.js 16` (App Router)
-  - `React 19` + `TypeScript`
-  - `Tailwind CSS v4` (di-import di `app/globals.css`)
-  - `framer-motion` – animasi halaman & modal
-  - `lucide-react` – ikon
-  - `qrcode.react` – generator QR code
+  - Next.js 16 (App Router)
+  - React 19 + TypeScript
+  - Tailwind CSS v4 (`app/globals.css`)
+  - framer-motion – animasi layout & modal
+  - lucide-react – ikon
+  - qrcode.react – QR code
 
 - **Web3 & Storage**
-  - `ethers` v6 – koneksi wallet, transaksi, kontrak
-  - `@openzeppelin/contracts` – ERC721 + `ERC721URIStorage` + `AccessControl`
-  - `pinata` (PinataSDK) – upload file & JSON ke IPFS + signed URL
+  - ethers v6 – koneksi wallet, transaksi, kontrak
+  - @openzeppelin/contracts 4.9.x – ERC721, AccessControl, dll.
+  - pinata SDK – upload file/JSON ke IPFS + signed URL
 
 - **Smart Contract & Tooling**
-  - `Truffle` – compile dan deploy smart contract
-  - Solidity `0.8.19` (diset di `truffle-config.js`)
+  - Truffle – compile & migrate kontrak
+  - Solidity 0.8.19 (via `truffle-config.js`)
+  - Ganache (local dev) / Infura (opsional testnet)
 
 ---
 
-## 3. Arsitektur & Struktur Direktori
+## 3. Struktur Direktori
 
-Struktur utama (yang relevan):
+**Frontend (`app/`)**
 
-- `app/`
-  - `layout.tsx` – root layout Next.js.
-  - `page.tsx` – landing marketplace kopi untuk pembeli:
-    - Filter berdasarkan jenis kopi, proses, dan range harga (dummy).
-    - Kartu produk membuka `ProductModal`.
-  - `buyer/page.tsx` – dashboard pembeli:
-    - Tabel order dengan status: *Awaiting Shipment*, *On The Way*, *Arrived* (dummy).
-  - `farmer/page.tsx` – dashboard farmer:
-    - Daftar batch (dummy), tombol ke halaman minting.
-  - `farmer/minting/page.tsx` – halaman mint Batch NFT:
-    - Form detail batch (nama, origin, process, description, priceEth, quantity, timeline).
-    - Upload file ke IPFS via API Next.js.
-    - Mint ke smart contract `BatchNFT`.
-    - Tampilkan QR code setelah mint.
-  - `components/Toast.tsx` – notifikasi kecil (success/error) dengan auto-dismiss.
-  - `components/ProductModal.tsx` – modal detail produk:
-    - Menampilkan metadata batch.
-    - Tombol “Buy Now” mengirim ETH dengan `BrowserProvider` dari `ethers`.
+- `app/layout.tsx` – root layout Next.js.
+- `app/page.tsx` – landing marketplace:
+  - Tampilkan produk kopi (saat ini masih dummy).
+  - Komponen `ProductModal` untuk lihat detail & aksi beli (masih `sendTransaction` langsung, siap diarahkan ke `Marketplace.purchase`).
+  - Nav bar menggunakan hook `useWallet` + kontrak `UserProfile` untuk menampilkan username dan role.
+- `app/roles/page.tsx` – halaman pemilihan role + username:
+  - Step 1: pilih role (Buyer/Farmer/Logistics).
+  - Step 2: isi username.
+  - Panggil `UserProfile.setUserProfile(role, username)` dengan wallet user.
+- `app/farmer/page.tsx` – dashboard farmer:
+  - List batch kopi (saat ini dummy).
+  - Tombol ke `/farmer/minting` dan `/farmer/dashboard`.
+- `app/farmer/minting/page.tsx` – form mint Batch NFT:
+  - Input: nama batch, origin, process, description, price, quantity, timeline (harvested/roasted/packed), upload gambar.
+  - Upload file ke `/api/upload` → IPFS (Pinata) → balikan `{ cid, url }`.
+  - Bentuk `ipfs://cid` sebagai `uri` dan panggil `BatchNFT.mintBatch(to, uri)`.
+  - Baca kembali `tokenURI` dan `getStatus` untuk menampilkan metadata/status + QR code.
+- `app/farmer/dashboard/page.tsx` – “Farmer Shipment Dashboard” (dummy):
+  - Menampilkan pesanan yang perlu dipacking dan tombol “Packing”; siap untuk dihubungkan ke `BatchNFT.updateBatchStatus` dan `Escrow`.
+- `app/buyer/page.tsx` – dashboard buyer (dummy):
+  - Tabel pesanan dengan status dan tombol “Confirm Payment” (simulasi).
+  - Nantinya akan membaca data dari `Escrow` dan `BatchNFT`.
+- `app/logistic/page.tsx` – dashboard logistics (dummy):
+  - Mengatur status shipment (Awaiting Shipment, On The Way, Arrived) via UI; siap dihubungkan ke `BatchNFT.updateBatchStatus` dengan role LOGISTICS_ROLE.
+- `app/components/ProductModal.tsx` – modal detail produk dan tombol “Buy Now” (saat ini kirim ETH langsung; target ke `Marketplace.purchase`).
+- `app/components/Toast.tsx` – notifikasi ringan (success/error) dengan framer-motion.
 
-- `app/api/`
-  - `upload/route.ts`
-    - `POST /api/upload`
-    - Terima `file` dari FormData.
-    - Upload ke Pinata `pinata.upload.public.file(file)`.
-    - Konversi CID ke URL gateway publik dan kembalikan sebagai `{ url }`.
-  - `url/route.ts`
-    - `GET /api/url`
-    - Generate signed URL Pinata dengan masa berlaku 30 detik.
+**API Routes (`app/api/`)**
 
-- `utils/`
-  - `config.ts`
-    - Inisialisasi `PinataSDK` dengan:
-      - `PINATA_JWT`
-      - `NEXT_PUBLIC_GATEWAY_URL`
-    - Helper:
-      - `uploadFileToIPFS(file: File)` – upload file, kembalikan URL gateway.
-      - `uploadJSONToIPFS(jsonData: object)` – upload JSON metadata.
-  - `BatchNFT.ts`
-    - Util untuk berinteraksi dengan smart contract `BatchNFT`:
-      - Otomatis memilih:
-        - `BrowserProvider` (MetaMask) jika `window.ethereum` tersedia.
-        - `JsonRpcProvider` read-only jika hanya ada `NEXT_PUBLIC_RPC_URL`.
-      - Fungsi:
-        - `mintBatch(to, ipfsHash)` – mint Batch NFT.
-        - `updateBatchStatus(tokenId, status)` – update status batch (transaksi).
-        - `getBatchMetadata(tokenId)` – baca metadata.
-        - `getBatchStatus(tokenId)` – baca status enum.
+- `app/api/upload/route.ts`
+  - `POST /api/upload`
+  - Terima `file` via `form-data`.
+  - `pinata.upload.public.file(file)` → dapat `cid`.
+  - `pinata.gateways.public.convert(result.cid)` → URL gateway.
+  - Response:
+    ```json
+    { "cid": "<CID>", "url": "https://gateway.pinata.cloud/ipfs/<CID>" }
+    ```
+- `app/api/url/route.ts`
+  - `GET /api/url`
+  - Generate signed URL Pinata (berlaku 30 detik) via `pinata.upload.public.createSignedURL`.
 
-- `contracts/`
-  - `BatchNFT.sol`
-    - Kontrak utama NFT batch kopi:
-      - `contract BatchNFT is ERC721URIStorage, AccessControl`.
-      - Nama token: `"Brewify Coffee Batch"`, simbol: `"BREW"`.
-    - Roles:
-      - `DEFAULT_ADMIN_ROLE` – admin kontrak (set di constructor ke `msg.sender`).
-      - `MINTER_ROLE` – hanya address dengan role ini yang boleh mint & update status.
-    - State:
-      - `uint256 private _nextId = 1;` – counter token ID.
-      - `enum Status { Unknown, Harvested, Processed, Packed, Shipped, Delivered }`
-      - `mapping(uint256 => Status) public tokenStatus;`
-    - Event:
-      - `BatchMinted(address indexed to, uint256 indexed tokenId, string uri)`
-      - `StatusUpdated(uint256 indexed tokenId, Status newStatus)`
-    - Fungsi utama:
-      - `mintBatch(address to, string memory uri)`:
-        - `onlyRole(MINTER_ROLE)`.
-        - Mint token ID baru ke `to`.
-        - Set URI dengan `_setTokenURI(tokenId, uri)`.
-        - Set status awal `Status.Harvested`.
-        - Emit `BatchMinted`.
-      - `updateStatus(uint256 tokenId, Status newStatus)`:
-        - `onlyRole(MINTER_ROLE)`.
-        - Require token exist.
-        - Update `tokenStatus[tokenId]` dan emit `StatusUpdated`.
-      - `getStatus(uint256 tokenId)`:
-        - View fungsi untuk membaca status token.
-      - Override penting:
-        - `supportsInterface` override `ERC721URIStorage` + `AccessControl`.
-        - `_burn` dan `tokenURI` override `ERC721URIStorage`.
+**Utils & Hooks**
 
-- `migrations/`
-  - `1_deploy_contracts.js`
-    - Deploy kontrak `BatchNFT`.
-  - (file `.gitkeep` untuk menjaga folder tetap ada di repo).
+- `utils/config.ts`
+  - Inisialisasi `PinataSDK` dengan:
+    - `PINATA_JWT`
+    - `NEXT_PUBLIC_GATEWAY_URL`
+  - Helper:
+    - `uploadFileToIPFS(file)` – upload file dan kembalikan URL gateway.
+    - `uploadJSONToIPFS(jsonData)` – upload JSON dan kembalikan URL gateway.
+- `utils/BatchNFT.ts`
+  - Util untuk interaksi dengan kontrak `BatchNFT` (alamat dari `NEXT_PUBLIC_BATCHNFT_ADDRESS`):
+    - Otomatis memilih `BrowserProvider` (MetaMask) atau `JsonRpcProvider` (RPC read‑only).
+    - Fungsi:
+      - `mintBatch(to, ipfsHash)`
+      - `updateBatchStatus(tokenId, status)`
+      - `getBatchMetadata(tokenId)` → `tokenURI(tokenId)`
+      - `getBatchStatus(tokenId)` → `getStatus(tokenId)`
+- `utils/getUserProfile.ts`
+  - Helper untuk mendapatkan instance kontrak `UserProfile` berbasis artefak `build/contracts/UserProfile.json` dan `providerOrSigner`.
+- `hooks/useWallet.ts`
+  - Abstraksi connect/disconnect MetaMask:
+    - Menyimpan `address`, `signer`, `isConnecting`.
+    - Menangani event `accountsChanged` / `chainChanged`.
 
-- `truffle-config.js`
-  - Jaringan:
-    - `development`:
-      - `host: "127.0.0.1"`
-      - `port: 7545` (default Ganache GUI)
-      - `network_id: "*"`
-  - Compiler:
-    - `solc.version: "0.8.19"`
-    - Optimizer aktif, EVM version `london`.
+**Kontrak (`contracts/`)**
 
----
+- `BatchNFT.sol`
+  - ERC721 dengan `ERC721URIStorage` + `AccessControl`.
+  - Nama: `Brewify Coffee Batch` (`BREW`).
+  - Roles:
+    - `DEFAULT_ADMIN_ROLE`
+    - `MINTER_ROLE` – mint/update status awal batch.
+    - `LOGISTICS_ROLE` – update status pengiriman (`Shipped`/`Delivered`).
+  - State:
+    - `uint256 private _nextId = 1;`
+    - `enum Status { Unknown, Harvested, Processed, Packed, Shipped, Delivered }`
+    - `mapping(uint256 => Status) public tokenStatus;`
+    - `mapping(uint256 => address) public creator;`
+  - Fungsi utama:
+    - `mintBatch(address to, string uri)` – mint token baru, set `Status.Harvested`, simpan `tokenURI`.
+    - `updateBatchStatus(tokenId, Status newStatus)` – cek order enum + role (Farmer untuk Harvested/Processed/Packed, Logistics untuk Shipped/Delivered).
+    - `updateTokenURI(tokenId, string newUri)` – owner/Minter boleh update metadata.
+    - `getStatus(tokenId)` – baca enum status.
 
-## 4. Alur Fitur (End-to-End)
+- `UserProfile.sol`
+  - Registry user on‑chain:
+    - `enum Role { None, Buyer, Farmer, Logistics }`
+    - `struct Profile { Role role; string username; bool isRegistered; }`
+    - `mapping(address => Profile) public profiles;`
+  - Fungsi:
+    - `setUserProfile(Role _role, string _username)` – set role + username untuk `msg.sender`.
+    - `getUser(address)` – return `(roleUint8, username, isRegistered)`.
+    - `getRole(address)`, `getUsername(address)` helper.
 
-### 4.1 Marketplace (Landing Page)
+- `Escrow.sol`
+  - Mengelola escrow pesanan marketplace:
+    - Menahan dana buyer (`amount`) sampai buyer confirm atau dispute diresolve.
+    - Menyimpan `EscrowOrder` dengan field buyer, seller, amount, fee snapshot, status shipped/disputed/released.
+  - Hanya address yang diset sebagai `approvedMarketplace[addr]` yang boleh memanggil `createEscrow`.
+  - Fungsi utama:
+    - `createEscrow(seller, buyer, feeBpsSnapshot)` (payable, onlyApproved).
+    - `markShipped(escrowId)` (seller).
+    - `confirmReceived(escrowId)` (buyer) → release dana ke seller minus fee.
+    - `approveCancel(escrowId)` → kedua pihak setuju cancel → refund buyer.
+    - `raiseDispute`, `resolveDispute` (owner/arbitrator).
 
-File: `app/page.tsx`
-
-- Menampilkan daftar produk kopi (dummy) dengan:
-  - Nama batch, origin, process, notes, harga (ETH), timeline.
-  - Filter berdasarkan tipe kopi, proses, dan range harga (UI saja, belum terhubung kontrak).
-- Klik kartu produk membuka `ProductModal`:
-  - Menampilkan detail batch + timeline.
-  - Tombol **“Buy Now”**:
-    - Cek `window.ethereum`.
-    - Gunakan `BrowserProvider` untuk mendapatkan `signer`.
-    - Mengirim transaksi `sendTransaction` ke alamat penerima contoh:
-      - `to: 0xdF4651D302A5c0Fbe79851db4BFa709db7e7b3F1`
-      - `value: parseEther(product.priceEth)`.
-    - Menampilkan toast sukses/gagal.
-
-> Saat ini, transaksi buy belum lewat kontrak marketplace/escrow, hanya direct transfer ke alamat contoh.
-
-### 4.2 Dashboard Farmer
-
-File: `app/farmer/page.tsx`
-
-- Menampilkan daftar batch (dummy) milik farmer.
-- Fitur:
-  - Pencarian batch by nama.
-  - Tombol **“Mint New Coffee”** untuk menuju halaman minting `/farmer/minting`.
-  - Dropdown `Edit` / `Delete` (UI placeholder, belum terhubung ke kontrak).
-
-### 4.3 Minting Batch NFT
-
-File: `app/farmer/minting/page.tsx`
-
-- Form input:
-  - `name`, `origin`, `process`, `description`
-  - `priceEth`, `quantity`
-  - `harvested`, `roasted`, `packed` (timeline)
-  - Upload file gambar batch.
-
-- Proses `handleMint` (ringkas):
-  1. Validasi field wajib.
-  2. Upload file ke `/api/upload`:
-     - Endpoint mem-forward ke Pinata dan mengembalikan URL gateway.
-     - URL/URI ini dipakai sebagai token URI di kontrak `BatchNFT`.
-  3. Cek `window.ethereum` dan inisialisasi:
-     - `ethers.BrowserProvider(window.ethereum)`
-     - `const signer = await provider.getSigner();`
-  4. Instansiasi kontrak:
-     - `new ethers.Contract(CONTRACT_ADDRESS, BatchNFTAbi.abi, signer)`
-  5. Panggil `mintBatch(to, uri)`:
-     - `to` = address signer.
-     - Menunggu transaksi selesai dan membaca event `BatchMinted` untuk `tokenId`.
-  6. Baca ulang status token:
-     - `tokenStatus(tokenId)` via helper / kontrak.
-  7. Simpan `tokenId` dan tampilkan QR code:
-     - Saat ini value QR code berupa URL contoh: `https://example.com/token/${tokenId}` (bisa diarahkan ke halaman detail on-chain di masa depan).
-
-### 4.4 Dashboard Buyer
-
-File: `app/buyer/page.tsx`
-
-- Tabel order dummy dengan kolom:
-  - Nama batch, origin, process
-  - Harga (ETH), qty
-  - Status (Awaiting Shipment, On The Way, Arrived)
-- Status visual:
-  - Warna dan efek glow/blink bergantung pada status.
-  - Animasi blink untuk *Awaiting Shipment* (CSS keyframes manual).
-- Tombol **“Confirm”**:
-  - Muncul hanya jika status *Arrived* (untuk sekarang hanya `alert`, belum mengubah kontrak).
+- `Marketplace.sol`
+  - Marketplace untuk listing dan beli Batch NFT:
+    - Interface ke `IEscrow`, `IBatchNFT`, `IUserProfile`.
+  - State:
+    - `owner`, `escrow`, `batchNFT`, `userProfile`, `feeBps`.
+    - `struct Listing { seller, price, active, tokenId, uri }`
+    - `nextListingId`, `mapping(uint256 => Listing) _listings`.
+  - Fungsi seller:
+    - `createListing(price, tokenId, uri)` – hanya Farmer dan owner token; menyimpan listing baru.
+    - `updateListing(listingId, newPrice, newUri)` – edit harga/deskripsi.
+    - `cancelListing(listingId)` – nonaktifkan listing.
+  - Fungsi buyer:
+    - `purchase(listingId)` – hanya Buyer:
+      - `msg.value` harus = `price`.
+      - Panggil `escrow.createEscrow{value: msg.value}(seller, buyer, feeBps)`.
+      - Panggil `batchNFT.safeTransferFrom(seller, buyer, tokenId)`.
+      - Nonaktifkan listing + emit event `Purchased`.
 
 ---
 
-## 5. Environment Variables
+## 4. Environment Variables
 
-Buat file `.env.local` di root project:
+**Frontend (`.env.local`)**
+
+Contoh untuk Ganache lokal:
 
 ```bash
-PINATA_JWT=your_pinata_jwt
+PINATA_JWT=eyJ...
 NEXT_PUBLIC_GATEWAY_URL=https://gateway.pinata.cloud/ipfs
-NEXT_PUBLIC_RPC_URL=http://127.0.0.1:7545  # optional, untuk read-only
+NEXT_PUBLIC_RPC_URL=http://127.0.0.1:7545
+
+NEXT_PUBLIC_BATCHNFT_ADDRESS=0x...   # dari build/contracts/BatchNFT.json networks["5777"].address
+NEXT_PUBLIC_USERPROFILE_ADDRESS=0x...
+NEXT_PUBLIC_ESCROW_ADDRESS=0x...     # (opsional: untuk util escrow)
+NEXT_PUBLIC_MARKETPLACE_ADDRESS=0x...
 ```
 
-Penjelasan:
+**Backend / Truffle (`.env`)**
 
-- `PINATA_JWT`  
-  Token JWT dari Pinata (dibutuhkan untuk upload file/JSON).
+Jika ingin deploy ke Sepolia via Infura:
 
-- `NEXT_PUBLIC_GATEWAY_URL`  
-  Gateway publik IPFS via Pinata untuk mengakses file berdasarkan CID.
+```bash
+INFURA_SEPOLIA_URL=https://sepolia.infura.io/v3/<INFURA_API_KEY>
+DEPLOYER_PRIVATE_KEY=0x...   # private key wallet deployer (jaga baik‑baik)
+```
 
-- `NEXT_PUBLIC_RPC_URL` (opsional)  
-  Jika MetaMask tidak tersedia di browser, util `utils/BatchNFT.ts` bisa memakai RPC ini untuk operasi read-only (mis. dashboard yang hanya perlu baca metadata/status).
+Script `scripts/deploy.ts` juga memakai:
 
-Jika Anda deploy kontrak baru, **jangan lupa**:
-- Update `CONTRACT_ADDRESS` di:
-  - `utils/BatchNFT.ts`
-  - `app/farmer/minting/page.tsx`
+```bash
+NEXT_PUBLIC_RPC_URL=...  # sama seperti di .env.local
+PRIVATE_KEY=0x...        # untuk deploy UserProfile via ethers.js (opsional)
+```
+
+Setelah mengubah `.env.local`, selalu restart `npm run dev`.
 
 ---
 
-## 6. Menjalankan Proyek
+## 5. Menjalankan di Ganache (Local Dev)
 
-### 6.1 Prasyarat
+1. **Start Ganache**
+   - RPC: `http://127.0.0.1:7545`
+   - Network ID biasanya `5777`, chain ID `1337`.
 
-- Node.js 18+ dan npm
-- MetaMask (browser extension)
-- Truffle (`npm install -g truffle`, opsional jika ingin main di lokal)
-- Ganache/Anvil/Hardhat node lokal (untuk `network development`, jika dipakai)
+2. **Compile & migrate kontrak**
 
-### 6.2 Install Dependencies
+   ```bash
+   npx truffle compile
+   npx truffle migrate --reset --network development
+   ```
 
-```bash
-npm install
-```
+   Migration akan deploy:
+   - `BatchNFT`
+   - `Escrow` (feeRecipient = `accounts[0]`, feeBps = 250 → 2.5%)
+   - `UserProfile`
+   - `Marketplace` (terhubung ke `BatchNFT`, `Escrow`, `UserProfile` dan otomatis di‑approve di `Escrow`).
 
-### 6.3 Menjalankan Blockchain Lokal (Opsional)
+3. **Isi `.env.local` dengan alamat kontrak**
+   - Buka `build/contracts/*.json`, lihat `networks["5777"].address` untuk:
+     - `BatchNFT.json`
+     - `UserProfile.json`
+     - `Escrow.json`
+     - `Marketplace.json`
+   - Masukkan ke `NEXT_PUBLIC_*_ADDRESS` seperti di atas.
 
-Jika ingin pakai Truffle + Ganache:
+4. **Set MetaMask ke Ganache**
+   - Tambah network `Localhost 7545` (RPC `http://127.0.0.1:7545`, chain ID `1337`).
+   - Pilih network tersebut di MetaMask.
+   - (Opsional) import private key akun Ganache supaya punya saldo ETH lokal.
 
-1. Jalankan Ganache GUI/CLI di `127.0.0.1:7545`.
-2. Compile & migrate kontrak:
+5. **Jalankan frontend**
 
-```bash
-truffle compile
-truffle migrate --network development
-```
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-3. Ambil address kontrak `BatchNFT` hasil deploy dari output `truffle migrate`.
-4. Update:
-   - `CONTRACT_ADDRESS` di `utils/BatchNFT.ts`
-   - `CONTRACT_ADDRESS` di `app/farmer/minting/page.tsx`
-5. Import private key dari Ganache ke MetaMask dan set jaringan custom RPC yang sama (`127.0.0.1:7545`).
+   Aplikasi jalan di `http://localhost:3000`.
 
-### 6.4 Menjalankan Frontend
+---
 
-```bash
-npm run dev
-```
+## 6. Alur Penggunaan
 
-Aplikasi akan berjalan di: `http://localhost:3000`
+**1) Setup Profil & Role**
+
+- User connect wallet (button di navbar) → `/roles`:
+  - Pilih role: Buyer / Farmer / Logistics.
+  - Isi username.
+  - Simpan ke blockchain via `UserProfile.setUserProfile`.
+- Di home (`/`), app membaca profil via `getUser(address)`:
+  - Menampilkan `username` dan `Role` di menu user.
+  - Nantinya bisa digunakan untuk guard akses halaman (mis. Farmer hanya bisa ke dashboard farmer, dll.).
+
+**2) Farmer – Mint & Listing**
+
+- Mint batch baru di `/farmer/minting`:
+  - Upload gambar batch → IPFS (Pinata) via `/api/upload` → dapat `cid` + URL.
+  - Form detail batch diisi.
+  - Panggil `BatchNFT.mintBatch(to, "ipfs://cid")` dengan wallet farmer (role `Farmer`).
+  - Setelah transaksi, baca `tokenURI` + `getStatus` untuk update UI & QR code.
+- Setelah mint, workflow berikutnya (marketplace):
+  - Pantau token ID hasil mint.
+  - Panggil `Marketplace.createListing(priceWei, tokenId, uri)` dari halaman farmer/dashboard (belum di‑hook di UI, tapi kontrak siap).
+
+**3) Buyer – Beli dan Konfirmasi Pembayaran**
+
+- Buyer melihat daftar kopi di home (`/`):
+  - Saat ini masih dummy, tetapi targetnya listing akan diambil dari `Marketplace`.
+- Pada saat pembelian on‑chain penuh:
+  - `ProductModal` akan memanggil `Marketplace.purchase(listingId, { value: price })`.
+  - `Escrow` menyimpan dana, NFT berpindah ke buyer.
+- Di `/buyer`:
+  - Tabel order akan membaca:
+    - Info NFT (BatchNFT / Marketplace).
+    - Status escrow (Escrow) dan status pengiriman (BatchNFT.getStatus).
+  - Tombol **Confirm Payment** memanggil `Escrow.confirmReceived(escrowId)` untuk me‑release dana ke farmer.
+
+**4) Logistics – Update Status**
+
+- User ber‑role Logistics akan menggunakan `/logistic`:
+  - UI sudah siap untuk memilih order & mengubah status (dummy).
+  - Integrasi target:
+    - Panggil `BatchNFT.updateBatchStatus(tokenId, Status.Shipped/Delivered)` dengan wallet LOGISTICS_ROLE.
+  - Buyer hanya bisa confirm escrow kalau status sudah `Delivered`.
 
 ---
 
 ## 7. API & Utils Detail
 
-### 7.1 API Upload (IPFS)
+**Upload IPFS (`/api/upload`)**
 
-- **Endpoint**: `POST /api/upload`
-- **Body**: `form-data` dengan field `file`
-- **Respons sukses**:  
+- Method: `POST`
+- Body: `form-data` dengan field `file`.
+- Respons sukses:
   ```json
-  { "url": "https://gateway.pinata.cloud/ipfs/<CID>" }
+  { "cid": "<CID>", "url": "https://gateway.pinata.cloud/ipfs/<CID>" }
   ```
 
-Digunakan di halaman minting untuk mengunggah gambar batch sebelum mint NFT.
+**Signed URL (`/api/url`)**
 
-### 7.2 API Signed URL
+- Method: `GET`
+- Respons sukses:
+  ```json
+  { "url": "https://..." }
+  ```
+  URL ini valid sebentar untuk upload langsung ke Pinata (tidak wajib dipakai di versi sekarang).
 
-- **Endpoint**: `GET /api/url`
-- Menghasilkan signed URL Pinata yang berlaku **30 detik**.  
-  Cocok untuk use-case upload client-side langsung ke Pinata jika diperlukan di masa depan.
+**`utils/BatchNFT.ts`**
 
-### 7.3 Utils Kontrak (`utils/BatchNFT.ts`)
+- `mintBatch(to, ipfsHash)` – mint batch baru.
+- `updateBatchStatus(tokenId, status)` – update status on‑chain.
+- `getBatchMetadata(tokenId)` – baca `tokenURI` (biasanya `ipfs://CID`).
+- `getBatchStatus(tokenId)` – baca enum status melalui `getStatus`.
 
-- `getProviderAndSigner()`  
-  - Jika `window.ethereum` ada: gunakan `BrowserProvider` dan `getSigner()`.
-  - Jika tidak ada, tetapi `NEXT_PUBLIC_RPC_URL` diset: gunakan `JsonRpcProvider` (read-only).
+**`utils/getUserProfile.ts`**
 
-- `getContract(withSigner?: boolean)`  
-  - Mengembalikan instance `ethers.Contract` berbasis `CONTRACT_ADDRESS` dan `BatchNFTAbi.abi`.
+- `getUserProfileContract(providerOrSigner)` – helper untuk instansiasi kontrak `UserProfile` dari artefak + provider/signer.
 
-- Fungsi publik:
-  - `mintBatch(to, ipfsHash)` – mint token baru.
-  - `updateBatchStatus(tokenId, status)` – mengubah enum status (butuh signer dengan `MINTER_ROLE`).
-  - `getBatchMetadata(tokenId)` – baca metadata (IPFS URL/hash).
-  - `getBatchStatus(tokenId)` – baca status enum.
+**`hooks/useWallet.ts`**
 
----
-
-## 8. Testing
-
-- Direktori `test/` sudah disiapkan untuk test Truffle (saat ini kosong).
-- Rekomendasi test kontrak:
-  - Mint Batch NFT dan cek:
-    - Owner benar.
-    - `tokenStatus` awal = `Status.Harvested`.
-    - `tokenURI` sesuai dengan URI yang dikirim.
-  - `updateStatus`:
-    - Hanya address dengan `MINTER_ROLE` yang dapat mengubah status.
-    - Event `StatusUpdated` teremit dengan nilai enum yang benar.
-
-Untuk frontend/backend Next.js belum ada test terintegrasi; Anda dapat menambahkan sesuai kebutuhan (mis. Jest/Playwright).
+- `connect`, `disconnect`.
+- `address`, `signer`, `isConnecting`, `hasLoggedOut`.
 
 ---
 
-## 9. Roadmap Kontrak Berikutnya (Escrow & Marketplace Kopi)
+## 8. Testing & Pengembangan Lanjut
 
-Per kode sekarang, pembelian masih berupa pengiriman ETH langsung ke alamat contoh. Roadmap berikut direncanakan:
+- **Kontrak**
+  - Tambah test di folder `test/` untuk:
+    - `BatchNFT` – mint, update status, role check, tokenURI.
+    - `UserProfile` – set/get user, role valid.
+    - `Escrow` – createEscrow, confirmReceived, approveCancel, raiseDispute, resolveDispute.
+    - `Marketplace` – createListing, cancel, purchase (integrasi dengan Escrow + BatchNFT).
 
-- **Kontrak Marketplace**
-  - Menyimpan daftar listing batch NFT:
-    - `tokenId`, harga per unit, kuantitas tersedia, pemilik.
-  - Fungsi:
-    - `createListing(tokenId, price, quantity)`
-    - `updateListing(...)`, `cancelListing(...)`
-    - `purchase(tokenId, quantity)` yang berinteraksi dengan escrow.
+- **Frontend**
+  - Ganti alur “Buy Now” di `ProductModal` untuk memanggil `Marketplace.purchase` (bukan `sendTransaction` langsung).
+  - Sambungkan dashboard buyer/logistics ke data on‑chain (Escrow + BatchNFT).
+  - Tambah halaman detail token (QR target) yang membaca metadata IPFS + status + riwayat (kalau ditambahkan).
 
-- **Kontrak Escrow**
-  - Menahan dana pembeli (ETH/USDC) sampai pesanan dikonfirmasi terkirim.
-  - Flow:
-    - Buyer memanggil `purchase` di marketplace → dana masuk ke escrow untuk order tertentu.
-    - Farmer meng-update status batch (on-chain) sampai `Delivered`.
-    - Buyer mengkonfirmasi penerimaan → escrow melepas dana ke farmer.
-    - Opsi dispute/cancel sebelum pengiriman (refund ke buyer).
-
-- **Integrasi Frontend**
-  - Landing/marketplace:
-    - Menarik listing langsung dari kontrak marketplace (bukan dummy array).
-  - `ProductModal`:
-    - Tombol “Buy Now” memanggil `purchase` di kontrak marketplace (bukan `sendTransaction` langsung).
-  - Halaman buyer:
-    - Menarik daftar order & status escrow on-chain.
-    - Tombol “Confirm” memanggil fungsi release dana di escrow.
-  - Dashboard farmer:
-    - Mengupdate status di kontrak `BatchNFT`.
-    - Memicu logika release dana escrow setelah status `Delivered`.
-
-Roadmap ini menjaga garis besar arsitektur yang sudah ada (BatchNFT + IPFS + Pinata) sambil menambahkan layer ekonomi dan keamanan melalui escrow & marketplace on-chain.
-
+Brewify sudah memiliki fondasi lengkap: profile on‑chain, NFT batch, marketplace, dan escrow. Sisanya adalah menyambungkan semua potongan ini di UI dan menambah test agar sistem stabil di production.*** End Patch

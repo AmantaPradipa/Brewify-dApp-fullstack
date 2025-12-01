@@ -4,9 +4,19 @@ pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/access/AccessControl.sol";
 
+interface IUserProfileRoles {
+    enum Role {
+        None,
+        Buyer,
+        Farmer,
+        Logistics
+    }
+
+    function getRole(address user) external view returns (Role);
+}
+
 contract BatchNFT is ERC721URIStorage, AccessControl {
-    bytes32 public constant MINTER_ROLE    = keccak256("MINTER_ROLE");
-    bytes32 public constant LOGISTICS_ROLE = keccak256("LOGISTICS_ROLE");
+    IUserProfileRoles public userProfile;
 
     enum Status {
         Unknown,
@@ -25,18 +35,23 @@ contract BatchNFT is ERC721URIStorage, AccessControl {
     event BatchMinted(address indexed to, uint256 indexed tokenId, string uri);
     event StatusUpdated(uint256 indexed tokenId, Status previousStatus, Status newStatus);
     event TokenURIUpdated(uint256 indexed tokenId, string newUri);
+    event UserProfileUpdated(address indexed userProfile);
 
     constructor() ERC721("Brewify Coffee Batch", "BREW") {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
-        _grantRole(MINTER_ROLE, msg.sender);
-        _grantRole(LOGISTICS_ROLE, msg.sender); // bisa diganti/ditambah via grantRole
     }
 
-    function mintBatch(address to, string memory uri)
-        external
-        onlyRole(MINTER_ROLE)
-        returns (uint256)
-    {
+    function setUserProfile(address _userProfile) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        require(_userProfile != address(0), "BatchNFT: invalid profile");
+        userProfile = IUserProfileRoles(_userProfile);
+        emit UserProfileUpdated(_userProfile);
+    }
+
+    function mintBatch(address to, string memory uri) external returns (uint256) {
+        require(address(userProfile) != address(0), "BatchNFT: userProfile not set");
+        IUserProfileRoles.Role role = userProfile.getRole(msg.sender);
+        require(role == IUserProfileRoles.Role.Farmer, "BatchNFT: only farmer role");
+
         uint256 tokenId = _nextId++;
 
         _safeMint(to, tokenId);
@@ -57,21 +72,24 @@ contract BatchNFT is ERC721URIStorage, AccessControl {
         Status current = tokenStatus[tokenId];
         require(uint8(newStatus) > uint8(current), "BatchNFT: invalid status transition");
 
-        // Farmer (MINTER_ROLE) mengelola tahap produksi awal
+        require(address(userProfile) != address(0), "BatchNFT: userProfile not set");
+        IUserProfileRoles.Role role = userProfile.getRole(msg.sender);
+
+        // Farmer mengelola tahap produksi awal
         if (
             newStatus == Status.Harvested ||
             newStatus == Status.Processed ||
             newStatus == Status.Packed
         ) {
             require(
-                hasRole(MINTER_ROLE, msg.sender),
+                role == IUserProfileRoles.Role.Farmer,
                 "BatchNFT: only farmer role"
             );
         }
         // Logistics / verifier mengelola pengiriman & delivered
         else {
             require(
-                hasRole(LOGISTICS_ROLE, msg.sender),
+                role == IUserProfileRoles.Role.Logistics,
                 "BatchNFT: only logistics role"
             );
         }
@@ -80,13 +98,16 @@ contract BatchNFT is ERC721URIStorage, AccessControl {
         emit StatusUpdated(tokenId, current, newStatus);
     }
 
-    /// Izinkan pemilik token (atau farmer role) meng-update metadata URI (mis. saat ganti gambar/metadata IPFS)
+    /// Izinkan pemilik token (atau farmer role aktif) meng-update metadata URI (mis. saat ganti gambar/metadata IPFS)
     function updateTokenURI(uint256 tokenId, string calldata newUri) external {
         require(_exists(tokenId), "BatchNFT: token does not exist");
-        require(
-            _isApprovedOrOwner(_msgSender(), tokenId) || hasRole(MINTER_ROLE, _msgSender()),
-            "BatchNFT: not authorised"
-        );
+
+        bool isOwnerOrApproved = _isApprovedOrOwner(_msgSender(), tokenId);
+        bool isFarmer = false;
+        if (address(userProfile) != address(0)) {
+            isFarmer = userProfile.getRole(_msgSender()) == IUserProfileRoles.Role.Farmer;
+        }
+        require(isOwnerOrApproved || isFarmer, "BatchNFT: not authorised");
 
         _setTokenURI(tokenId, newUri);
         emit TokenURIUpdated(tokenId, newUri);

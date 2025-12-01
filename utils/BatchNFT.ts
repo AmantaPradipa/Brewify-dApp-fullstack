@@ -2,7 +2,7 @@
 import { ethers } from "ethers";
 import BatchNFTAbi from "../build/contracts/BatchNFT.json";
 
-const CONTRACT_ADDRESS = "0x4A1628B149b78F4b04820f5fe9B29b2F30c0cA46";
+const CONTRACT_ADDRESS = process.env.NEXT_PUBLIC_BATCHNFT_ADDRESS!;
 
 // Helper buat dapetin provider & signer
 const getProviderAndSigner = async () => {
@@ -61,10 +61,12 @@ export const updateBatchStatus = async (tokenId: number, status: number) => {
 // ============================
 export const getBatchMetadata = async (tokenId: number) => {
   const contract = await getContract(false);
-  return contract.batchMetadata(tokenId);
+  // di BatchNFT baru, metadata disimpan di tokenURI (ERC721URIStorage)
+  return contract.tokenURI(tokenId);
 };
 
 export const getBatchStatus = async (tokenId: number) => {
   const contract = await getContract(false);
-  return contract.batchStatus(tokenId);
+  // status enum diambil dari fungsi getStatus
+  return contract.getStatus(tokenId);
 };
