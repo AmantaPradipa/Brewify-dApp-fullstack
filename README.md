@@ -4,6 +4,15 @@ Brewify adalah dApp rantai pasok kopi. Petani (Farmer) melakukan minting **Batch
 
 ---
 
+## Anggota Kelompok
+| Nama | NIM |
+|------|-----|
+| Muhamad Raechan Ulwan Zacky | F1D02310015 |
+| Ida Bagus Amanta Pradipa Krishna | F1D02310059 |
+| Muhammad Alfath Mavianza | F1D02310077 |
+
+---
+
 ## 1. Arsitektur & Fitur Utama
 
 - **Batch NFT (ERC721) – `BatchNFT.sol`**
